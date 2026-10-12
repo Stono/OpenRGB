@@ -2326,8 +2326,10 @@ void RGBController_LogitechHIDPP20::DeviceUpdateLEDs()
 
         if(!by_type.empty())
         {
-            controller->SetPerKey8080(by_type);
-            controller->PerKeyCommit8080();
+            if(controller->SetPerKey8080(by_type))
+            {
+                controller->PerKeyCommit8080();
+            }
         }
 
         return;
@@ -3012,8 +3014,10 @@ void RGBController_LogitechHIDPP20::DeviceUpdateMode()
 
             if(!by_type.empty())
             {
-                controller->SetPerKey8080(by_type);
-                controller->PerKeyCommit8080();
+                if(controller->SetPerKey8080(by_type))
+                {
+                    controller->PerKeyCommit8080();
+                }
             }
 
             return;

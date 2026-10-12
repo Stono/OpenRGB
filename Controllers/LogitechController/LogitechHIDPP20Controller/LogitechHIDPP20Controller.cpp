@@ -1089,6 +1089,75 @@ int LogitechHIDPP20Controller::SendVeryLongFrame
     return result;
 }
 
+int LogitechHIDPP20Controller::SendVeryLongFrameAndWait
+    (
+    uint8_t         feat_idx,
+    uint8_t         function,
+    const uint8_t*  data,
+    size_t          len
+    )
+{
+    std::lock_guard<std::recursive_mutex> transaction_guard(transaction_mutex);
+
+    int send_result = SendVeryLongFrame(feat_idx, function, data, len);
+
+    if(send_result < 0)
+    {
+        return send_result;
+    }
+
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(HIDPP20_8080_ACK_TIMEOUT_MS);
+
+    while(true)
+    {
+        int remaining = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
+                            deadline - std::chrono::steady_clock::now()).count();
+
+        if(remaining <= 0)
+        {
+            break;
+        }
+
+        uint8_t resp_feat = 0;
+        uint8_t resp_func = 0;
+        uint8_t resp_data[60] = {};
+        int rd = ReadMessage(&resp_feat, &resp_func, resp_data, sizeof(resp_data), remaining);
+
+        if(rd < 0)
+        {
+            return rd;
+        }
+
+        if(rd == 0)
+        {
+            break;
+        }
+
+        if(resp_feat == 0xFF && resp_func == feat_idx &&
+           (resp_data[0] & 0xF0) == (function & 0xF0) &&
+           (resp_data[0] & 0x0F) == HIDPP20_SW_ID)
+        {
+            LOG_DEBUG("%s 0x8080 very-long frame rejected (error=0x%02X) func=0x%02X",
+                      LOG_TAG, resp_data[1], function);
+            return -1;
+        }
+
+        if(resp_feat == feat_idx &&
+           (resp_func & 0xF0) == (function & 0xF0) &&
+           (resp_func & 0x0F) == HIDPP20_SW_ID)
+        {
+            return rd;
+        }
+    }
+
+    DrainLateAnswers(feat_idx, function, 1);
+    LOG_DEBUG("%s 0x8080 very-long frame ACK timed out feat=0x%02X func=0x%02X",
+              LOG_TAG, feat_idx, function);
+    return 0;
+}
+
 int LogitechHIDPP20Controller::ReadStandardDirect
     (
     uint8_t*    feat_idx_out,
@@ -5506,15 +5575,18 @@ PerKeyFrameResult LogitechHIDPP20Controller::PerKeyFrameEnd()
 | count], <=14 tuples per packet (larger groups             |
 | split). Colors appear only after fn5 FlushLEDS.           |
 \*---------------------------------------------------------*/
-void LogitechHIDPP20Controller::SetPerKey8080
+bool LogitechHIDPP20Controller::SetPerKey8080
     (
     const std::vector<std::pair<uint16_t, std::vector<std::pair<uint8_t, RGBColor>>>>& by_type
     )
 {
     if(caps.idx_perkey_8080 == 0 || dev_perkey_vl == nullptr)
     {
-        return;
+        return false;
     }
+
+    std::lock_guard<std::recursive_mutex> transaction_guard(transaction_mutex);
+    FlushResponseQueue();
 
     bool kt40_id12_only = (caps.quirks & HIDPP20_QUIRK_8080_KEYTYPE40_ID12_ONLY) != 0;
 
@@ -5573,10 +5645,20 @@ void LogitechHIDPP20Controller::SetPerKey8080
                 payload[pos++] = RGBGetBValue(color);
             }
 
-            SendVeryLongFrame(caps.idx_perkey_8080, FN_8080_SET_KEY_COLORS,
-                              payload, pos);
+            int result = SendVeryLongFrameAndWait(caps.idx_perkey_8080,
+                                                  FN_8080_SET_KEY_COLORS,
+                                                  payload, pos);
+
+            if(result <= 0)
+            {
+                LOG_DEBUG("%s 0x8080 SetKeyColors failed for keyType=0x%04X offset=%zu",
+                          LOG_TAG, key_type, off);
+                return false;
+            }
         }
     }
+
+    return true;
 }
 
 /*---------------------------------------------------------*\
@@ -7635,4 +7717,3 @@ void LogitechHIDPP20Controller::ReadActiveProfileSector()
         LOG_DEBUG("%s   %04X: %s", LOG_TAG, (unsigned)row, hex);
     }
 }
-

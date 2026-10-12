@@ -116,6 +116,7 @@
 | paginates its readback by the same count.                 |
 \*---------------------------------------------------------*/
 #define HIDPP20_8080_KEYS_PER_FRAME         14
+static constexpr uint16_t HIDPP20_8080_ACK_TIMEOUT_MS = 300;
 
 /*---------------------------------------------------------*\
 | Feature 0x0001 functions (FeatureSet)                     |
@@ -715,7 +716,7 @@ public:
     | fn5 FlushLEDS commits on dev. The key set comes       |
     | from DiscoverPerKey8080: never hardcoded.             |
     \*-----------------------------------------------------*/
-    void              SetPerKey8080(const std::vector<std::pair<uint16_t, std::vector<std::pair<uint8_t, RGBColor>>>>& by_type);
+    bool              SetPerKey8080(const std::vector<std::pair<uint16_t, std::vector<std::pair<uint8_t, RGBColor>>>>& by_type);
     void              PerKeyCommit8080();
 
     /*-----------------------------------------------------*\
@@ -945,13 +946,14 @@ private:
 
     /*-----------------------------------------------------*\
     | Feature 0x8080 very-long (0x12) frame transport.      |
-    | Writes a 64-byte report to dev_perkey_vl; the ACK     |
-    | lands on dev and is drained by the reader thread.     |
-    | Fire-and-forget, do NOT route through SendStandard    |
+    | Writes a 64-byte report to dev_perkey_vl; its ACK     |
+    | lands on dev. Do NOT route through SendStandard       |
     | (which caps at the 0x11 long report).                 |
     \*-----------------------------------------------------*/
     int             SendVeryLongFrame(uint8_t feat_idx, uint8_t function,
                                       const uint8_t* data, size_t len);
+    int             SendVeryLongFrameAndWait(uint8_t feat_idx, uint8_t function,
+                                             const uint8_t* data, size_t len);
 
     /*-----------------------------------------------------*\
     | Reader thread dispatch layer                          |
